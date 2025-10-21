@@ -1,0 +1,136 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+    <meta charset="UTF-8">
+    <title>Интерактивная карта</title>
+    <link href="https://cdn.jsdelivr.net/npm/tailwindcss@2.2.19/dist/tailwind.min.css" rel="stylesheet">
+    <link rel="stylesheet" href="https://unpkg.com/leaflet@1.7.1/dist/leaflet.css" />
+    <script src="https://unpkg.com/leaflet@1.7.1/dist/leaflet.js"></script>
+    <style>
+        body { margin: 0; padding: 0; display: flex; height: 100vh; }
+        #sidebar { width: 350px; padding: 10px; background: #f0f0f0; overflow-y: auto; height: calc(100vh - 100px); }
+        #map { flex: 1; }
+        .point-image { max-width: 100%; height: auto; object-fit: cover; border-radius: 0.25rem; }
+        .top-bar { height: 60px; }
+        .bottom-bar { height: 40px; }
+    </style>
+</head>
+<body class="bg-gray-100 flex flex-col">
+    <!-- Верхний бар -->
+    <div class="top-bar bg-gray-900 text-white flex items-center justify-center shadow-lg">
+        <h1 class="text-4xl font-extrabold tracking-wide">Counter-Strike Tournaments</h1>
+    </div>
+
+    <!-- Основной контент -->
+    <div class="flex flex-1">
+        <div id="sidebar" class="bg-gray-200 shadow-lg p-4">
+            <h2 class="text-2xl font-bold text-gray-800 mb-4">Список турниров</h2>
+            <form method="get" class="mb-4 space-y-2">
+                <input type="text" name="q" value="{{ request.GET.q }}" placeholder="Поиск по названию" class="w-full p-2 border rounded" />
+                <select name="year" class="w-full p-2 border rounded">
+                    <option value="">Все годы</option>
+                    {% for y in available_years %}
+                        <option value="{{ y }}" {% if request.GET.year == y|stringformat:"s" %}selected{% endif %}>{{ y }}</option>
+                    {% endfor %}
+                </select>
+                <button type="submit" class="w-full bg-blue-600 text-white py-2 rounded">Искать</button>
+            </form>
+            <ul class="space-y-4">
+                {% for point in points_data %}
+                    <li class="p-2 bg-white rounded-lg shadow hover:bg-gray-100 transition duration-200 cursor-pointer">
+                        <strong class="text-lg text-blue-600">{{ point.name }}</strong><br>
+                        <p class="text-gray-600">{{ point.description }}</p>
+                        {% if point.year %}
+                            <p class="text-gray-500 text-sm">Год: {{ point.year }}</p>
+                        {% endif %}
+                        <br>
+                        {% if point.image %}
+                            <img src="{{ point.image }}" alt="{{ point.name }}" class="point-image w-full mt-2">
+                        {% else %}
+                            <p class="text-red-500">Нет изображения</p>
+                        {% endif %}
+                    </li>
+                {% endfor %}
+            </ul>
+        </div>
+        <div id="map" class="h-full"></div>
+    </div>
+
+    <!-- Нижний бар -->
+    <div class="bottom-bar bg-gray-900 text-white flex items-center justify-center shadow-lg">
+        <a href="https://vk.com/shcnxeno" class="text-blue-300 hover:text-blue-100 underline" target="_blank">Автор: Павленко Артур</a>
+    </div>
+
+    <script>
+        // Restore last view from localStorage if available
+        (function() {
+            try {
+                var saved = localStorage.getItem('map_last_view');
+                var initialCenter = [55.7547, 37.6201];
+                var initialZoom = 10;
+                if (saved) {
+                    var data = JSON.parse(saved);
+                    if (Array.isArray(data.center) && data.center.length === 2 && typeof data.zoom === 'number') {
+                        initialCenter = data.center;
+                        initialZoom = data.zoom;
+                    }
+                }
+                window.map = L.map('map').setView(initialCenter, initialZoom);
+            } catch (e) {
+                window.map = L.map('map').setView([55.7547, 37.6201], 10);
+            }
+        })();
+        L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
+            attribution: '&copy; OpenStreetMap contributors'
+        }).addTo(map);
+
+        // Добавляем точки и буферы из Django
+        var points = [
+            {% for point in points_data %}
+                {
+                    name: "{{ point.name|default_if_none:''|escapejs }}",
+                    lat: {{ point.latitude }},
+                    lon: {{ point.longitude }},
+                    desc: "{{ point.description|default_if_none:''|escapejs }}",
+                    radius: {{ point.radius }},
+                    image: "{{ point.image|default_if_none:''|escapejs }}"
+                },
+            {% endfor %}
+        ];
+
+        var colors = ['#FF6B6B', '#4ECDC4', '#45B7D1', '#96CEB4', '#FFEEAD', '#D4A5A5']; // Разные цвета
+        points.forEach(function(p, index) {
+            // Выбираем цвет на основе индекса
+            var color = colors[index % colors.length];
+
+            // Стандартный маркер
+            var marker = L.marker([p.lat, p.lon]).addTo(map);
+            marker.bindPopup("<b>" + p.name + "</b><br>" + p.desc + (p.image ? "<br><img src='" + p.image + "' style='max-width:100px;'>" : ""));
+
+            // Буферная зона (круг)
+            L.circle([p.lat, p.lon], {
+                color: color,
+                fillColor: color,
+                fillOpacity: 0.3,
+                radius: p.radius
+            }).addTo(map);
+        });
+
+        // Persist map view on move/zoom
+        map.on('moveend zoomend', function() {
+            var c = map.getCenter();
+            var z = map.getZoom();
+            try {
+                localStorage.setItem('map_last_view', JSON.stringify({ center: [c.lat, c.lng], zoom: z }));
+            } catch (e) {}
+        });
+
+        // Делаем элементы списка кликабельными
+        document.querySelectorAll('#sidebar li').forEach(function(li, index) {
+            li.addEventListener('click', function() {
+                map.setView([points[index].lat, points[index].lon], 15);
+            });
+        });
+    </script>
+</body>
+</html>
